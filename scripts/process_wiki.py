@@ -26,8 +26,9 @@ df = spark.read \
 
 print("Raw data loaded. Cleaning and transforming...")
 
-# 3. Clean and Transform the Data
-# The Wiki XML has a nested structure. We extract the Title and the Text Body.
+# ---------------------------------------------------------
+# 3. Clean and Transform the Data (Upgraded)
+# ---------------------------------------------------------
 clean_df = df.select(
     col("title").alias("article_title"),
     col("revision.text._VALUE").alias("article_text")
@@ -37,11 +38,33 @@ clean_df = df.select(
 clean_df = clean_df.filter(col("article_text").isNotNull())
 clean_df = clean_df.filter(~col("article_text").startswith("#REDIRECT"))
 
-# Basic Text Cleaning: Remove basic wiki markup like [[ ]] and HTML tags
-# (For your final project, you can make this regex much more advanced!)
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[\[|\]\]|<[^>]*>", ""))
+# --- The Regex Purification Pipeline ---
+# Note: "(?s)" tells Spark's regex engine to match across multiple lines
 
-print("Data cleaned. Blasting data to Elasticsearch...")
+# 1. Remove Citations and HTML tags
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)<ref.*?>.*?</ref>", ""))
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"<[^>]*>", ""))
+
+# 2. Remove Infoboxes and Templates {{ ... }}
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)\{\{.*?\}\}", ""))
+
+# 3. Remove Image and File attachments [[File:...]]
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)\[\[(?:File|Image):.*?\]\]", ""))
+
+# 4. Clean internal links: convert [[Target|Text]] into just "Text"
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"))
+
+# 5. Clean remaining basic links: convert [[Text]] into just "Text"
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[\[|\]\]", ""))
+
+# 6. Remove Bold/Italic formatting ticks
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"'{2,5}", ""))
+
+# 7. Remove rogue formatting characters (like excessive equals signs for headers)
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"={2,5}", ""))
+
+print("Data purified. Blasting data to Elasticsearch...")
+# ---------------------------------------------------------
 
 # 4. Write to Elasticsearch in Parallel
 # Spark will open multiple network connections and push chunks of data simultaneously.
