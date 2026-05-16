@@ -13,6 +13,17 @@ try {
 } catch {
 
 }
+
+Write-Host "--- ⚙️ Optimizing Elasticsearch for Bulk Ingestion ---" -ForegroundColor Cyan
+$es_settings = @{
+    settings = @{
+        "index.refresh_interval" = "-1"
+        "index.number_of_replicas" = 0
+    }
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:9200/wikipedia_index" -Method Put -Body $es_settings -ContentType "application/json" -ErrorAction SilentlyContinue
+
 Write-Host "--- 🧠 Submitting PySpark Job to the Master Node ---" -ForegroundColor Green
 docker exec -it spark-master /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
