@@ -38,6 +38,17 @@ clean_df = df.select(
 clean_df = clean_df.filter(col("article_text").isNotNull())
 clean_df = clean_df.filter(~col("article_text").startswith("#REDIRECT"))
 
+# ---------------------------------------------------------
+# NEW: Filter out Wikipedia Administrative Namespaces
+# ---------------------------------------------------------
+# We use a Regular Expression to match titles that start with these specific prefixes.
+# The '^' symbol means "starts with". The '|' symbol means "OR".
+namespace_pattern = "^(Wikipedia:|Talk:|User:|User talk:|Category:|Template:|File:|Draft:|Portal:|Help:)"
+
+# The ~ symbol means "NOT". So we keep rows that DO NOT start with those namespaces.
+clean_df = clean_df.filter(~col("article_title").rlike(namespace_pattern))
+
+
 # --- The Regex Purification Pipeline ---
 # Note: "(?s)" tells Spark's regex engine to match across multiple lines
 

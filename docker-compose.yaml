@@ -43,13 +43,10 @@ services:
   # 4. Apache Spark Worker (The Muscle)
   spark-worker:
     image: apache/spark:3.5.1
-    container_name: spark-worker
     # Command to start the worker and connect it to the master node
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     deploy:
       replicas: 3 # 3-node distributed cluster
-    ports:
-      - "8081:8081"
     volumes:
       - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts
