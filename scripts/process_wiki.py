@@ -9,6 +9,8 @@ spark = SparkSession.builder \
     .config("spark.es.port", "9200") \
     .config("spark.es.nodes.wan.only", "true") \
     .config("spark.es.index.auto.create", "true") \
+    .config("spark.es.batch.size.entries", "5000") \
+    .config("spark.es.batch.write.refresh", "false") \
     .getOrCreate()
 
 # Suppress overly chatty logs
@@ -24,6 +26,8 @@ df = spark.read \
     .option("rowTag", "page") \
     .load("/opt/spark/work-dir/data/simplewiki_small.bz2")
 
+# --- NEW LINE: Force Spark to slice the data into 24 distributed chunks ---
+df = df.repartition(24)
 print("Raw data loaded. Cleaning and transforming...")
 
 # ---------------------------------------------------------
