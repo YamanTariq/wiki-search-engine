@@ -48,8 +48,8 @@ services:
     deploy:
       replicas: 3 # 3-node distributed cluster
     environment:
-      - SPARK_WORKER_CORES=3    # Forces each worker to only use 3 cores (9 total)
-      - SPARK_WORKER_MEMORY=2g  # Forces each worker to only use 2GB RAM (6GB total)
+      - SPARK_WORKER_CORES=4    # Forces each worker to only use 3 cores (9 total)
+      - SPARK_WORKER_MEMORY=4g  # Forces each worker to only use 2GB RAM (6GB total)
     volumes:
       - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts

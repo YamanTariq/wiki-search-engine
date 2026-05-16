@@ -40,3 +40,11 @@ then run the streamlit app using:
 ```
 streamlit run app.py
 ```
+
+
+Stats on small dataset:
+no#  workers  cores_per_worker   Ram_per_worker  time
+1     1           12               6             5:30
+2     3           3                2             4:30
+3     3           4                3             4:00
+4     3           4                4             4:30 😭

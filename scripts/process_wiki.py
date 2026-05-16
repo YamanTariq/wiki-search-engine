@@ -78,6 +78,20 @@ clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"
 # 7. Remove rogue formatting characters (like excessive equals signs for headers)
 clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"={2,5}", ""))
 
+# --- NEW REGEX RULES ---
+
+# 1. Clean External Links WITH display text: [http://www.site.com Official site] -> "Official site"
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[http[^\s]+\s+([^\]]+)\]", "$1"))
+
+# 2. Clean External Links WITHOUT display text: [http://www.site.com] -> ""
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[http[^\]]+\]", ""))
+
+# 3. Clean orphaned template parameters (e.g., "| website = " or "| birth_date = ")
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\|\s*[\w\s]+\s*=\s*", ""))
+
+# 4. Clean lingering single pipes "|"
+clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\|", ""))
+
 print("Data purified. Blasting data to Elasticsearch...")
 # ---------------------------------------------------------
 
