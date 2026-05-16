@@ -1,3 +1,18 @@
+**Work to be done**
+
+> Data cleaning. rn the XMl file is uncleanmakes the elasticsearch index larger, slower, less accurate
+> optimize  the elastic search mappings. an index with strict mapping.
+> custom page rank because current isn't good
+> Make a script that automates the entire process. Currently have to put in commands myself
+> add fault tolerance by making multiple nodes with replication
+> write a benchmarking script to actually prove the system scales as data and load increases
+
+**work related to spark that needs to be done**
+> use bulk sizing
+> disable ES refresh
+> align partitions for load balancing
+
+
 First make sure that docker is running. Then run the docker-compose.yaml using:
 ```
 docker compose up -d     
