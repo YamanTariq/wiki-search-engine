@@ -1,5 +1,5 @@
 Write-Host "--- 🛑 Tearing down old cluster ---" -ForegroundColor Yellow
-docker compose down
+docker compose down -v
 
 Write-Host "--- 🚀 Spinning up Distributed Cluster (1 Master, 3 Workers, ES, Kibana) ---" -ForegroundColor Green
 docker compose up -d
