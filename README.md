@@ -13,6 +13,14 @@
 > align partitions for load balancing
 
 
+**Text Cleaning**
+> only keep articles with namespace 0
+> use `<id>` as unique `_id`
+> 
+
+
+**commands to run project**
+***Ignore everything below. just run the `run_pipeline.ps1`***
 First make sure that docker is running. Then run the docker-compose.yaml using:
 ```
 docker compose up -d     
@@ -42,9 +50,19 @@ streamlit run app.py
 ```
 
 
-Stats on small dataset:
+Stats on small dataset(before elastic search update 1):
 no#  workers  cores_per_worker   Ram_per_worker  time
 1     1           12               6             5:30
 2     3           3                2             4:30
 3     3           4                3             4:00
 4     3           4                4             4:30 😭
+
+
+Stats on small dataset(after elastic search update 1):
+no#  workers  cores_per_worker   Ram_per_worker  time
+4     3           4                4             4:00 
+1     1           12               10            3:48   0:54 to clean data
+2     3           4                3.2           4:18   1.1 to clean data
+3     3           4                3             4:00
+
+
