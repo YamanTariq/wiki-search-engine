@@ -1,102 +1,145 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace
-from pyspark.sql.types import StructType, StructField, StringType, LongType
+import os
 from functools import reduce
-import re
 
-# NEW: Explicit schema to prevent memory blowouts during XML parsing
-wiki_schema = StructType([
-    StructField("title", StringType(), True),
-    StructField("id", LongType(), True),         # Added the critical ID field
-    StructField("ns", LongType(), True),
-    StructField("revision", StructType([
-        StructField("text", StructType([
-            StructField("_VALUE", StringType(), True)
-        ]), True)
-    ]), True)
-])
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, length, regexp_replace, trim
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 
-# ============================================================================
-# HIGH-SPEED NATIVE SPARK SQL REGEX (Optimized for JVM Performance)
-# ============================================================================
-# We use the '|' (OR) operator to group multiple replacements into single passes,
-# reducing the number of times Spark has to scan and allocate new memory for the string.
 
-FAST_REGEX_RULES = [
-    # PASS 1: Nuke massive blocks (Citations, HTML comments, Bare URLs, Files, Categories)
-    # Replaced (?s) with [\s\S] for faster cross-line matching without flag overhead
-    (r"|<ref[^>]*>[\s\S]*?</ref>|<ref[^>]*/>|\[\[(?:File|Image|Category):[^\]]*\]\]|\[http[^\]]+\]", ""),
-    
-    # PASS 2 & 3: Templates (Run twice to catch basic nesting without catastrophic backtracking)
-    (r"\{\{[^{}]*\}\}", ""), 
-    (r"\{\{[^{}]*\}\}", ""), 
-    
-    # PASS 4: Extract readable text from links
-    (r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"),  # [[Target|Text]] -> Text
-    (r"\[\[([^\]|]*?)\]\]", "$1"),          # [[Target]] -> Target
-    (r"\[http[^\s]+\s+([^\]]+)\]", "$1"),   # [http://site.com Text] -> Text
-    
-    # PASS 5: Global Formatting Sweep (HTML tags, bold/italic, headers, template parameters, pipes)
-    (r"<[^>]+>|'{2,5}|={2,6}\s*|\s*={2,6}|\|\s*[a-zA-Z_][\w\s]*\s*=\s*|\|", ""),
-    
-    # PASS 6: Clean up the leftover whitespace
-    (r"\n{3,}", "\n\n")
+DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_small.bz2")
+INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
+PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "24"))
+
+WIKI_SCHEMA = StructType(
+    [
+        StructField("title", StringType(), True),
+        StructField("id", LongType(), True),
+        StructField("ns", LongType(), True),
+        StructField(
+            "revision",
+            StructType(
+                [
+                    StructField(
+                        "text",
+                        StructType([StructField("_VALUE", StringType(), True)]),
+                        True,
+                    )
+                ]
+            ),
+            True,
+        ),
+    ]
+)
+
+# These replacements run inside Spark/JVM, not as slow Python UDFs.
+CLEANING_RULES = [
+    (
+        r"<!--[\s\S]*?-->|"
+        r"<ref[^>]*>[\s\S]*?</ref>|<ref[^>]*/>|"
+        r"<math[^>]*>[\s\S]*?</math>|"
+        r"<code[^>]*>[\s\S]*?</code>|"
+        r"<syntaxhighlight[^>]*>[\s\S]*?</syntaxhighlight>|"
+        r"<gallery[^>]*>[\s\S]*?</gallery>|"
+        r"<nowiki[^>]*>[\s\S]*?</nowiki>|"
+        r"<timeline[^>]*>[\s\S]*?</timeline>|"
+        r"\{\|[\s\S]*?\|\}",
+        "",
+    ),
+    (r"\{\{[^{}]*\}\}", ""),
+    (r"\{\{[^{}]*\}\}", ""),
+    (r"\{\{[^{}]*\}\}", ""),
+    (r"\{\{[\s\S]*?\}\}", ""),
+    (r"(?i)\[\[(?:File|Image|Category):[^\]]*\]\]", ""),
+    (r"\[\[[a-z]{2,3}:[^\]]*\]\]", ""),
+    (r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"),
+    (r"\[\[([^\]|]*?)\]\]", "$1"),
+    (r"\[https?://[^\s\]]+\s+([^\]]+)\]", "$1"),
+    (r"\[https?://[^\]]+\]", ""),
+    (r"https?://[^\s]+", ""),
+    (r"__[A-Z]+__", ""),
+    (r"'{2,5}", ""),
+    (r"={2,6}\s*([^=]+?)\s*={2,6}", "$1"),
+    (r"<[^>]+>", ""),
+    (r"\|\s*[a-zA-Z_][\w\s]*\s*=\s*", ""),
+    (r"\|", " "),
+    (r"(?m)^[\*#:;]+\s*", ""),
+    (r"(?i)ISBN\s*[0-9\-]+", ""),
+    (r"(?i)ISSN\s*[0-9\-]+", ""),
+    (r"[\[\]\{\}]", ""),
+    (r"[ \t]{2,}", " "),
+    (r"\n{3,}", "\n\n"),
 ]
 
-if __name__ == "__main__":
-    # Initialize Spark with extended Network Timeouts to prevent Heartbeat crashes
-    spark = SparkSession.builder \
-        .appName("Wikipedia Indexer - Native JVM") \
-        .config("spark.es.nodes", "elasticsearch") \
-        .config("spark.es.port", "9200") \
-        .config("spark.es.nodes.wan.only", "true") \
-        .config("spark.es.index.auto.create", "true") \
-        .config("spark.es.batch.write.refresh", "false") \
-        .config("spark.es.batch.size.entries", "5000") \
-        .config("spark.es.batch.size.bytes", "5mb") \
-        .config("spark.network.timeout", "600s") \
-        .config("spark.executor.heartbeatInterval", "60s") \
-        .getOrCreate()
-    
-    spark.sparkContext.setLogLevel("WARN")
-    
-    # 1. Load Data
-    print("\n[1/4] Loading and filtering Wikipedia XML...")
-    df = spark.read.format("xml") \
-        .option("rowTag", "page") \
-        .schema(wiki_schema) \
-        .load("/opt/spark/work-dir/data/simplewiki_small.bz2") # Make sure the filename is correct
 
-    # 2. Filter BEFORE repartitioning
-    df = df.select(
-        col("id").alias("article_id"),
-        col("title").alias("article_title"), 
-        col("revision.text._VALUE").alias("article_text"), 
-        col("ns").alias("namespace")
+def clean_text(column):
+    return trim(
+        reduce(
+            lambda current, rule: regexp_replace(current, rule[0], rule[1]),
+            CLEANING_RULES,
+            column,
+        )
     )
-    df = df.filter(col("article_text").isNotNull())
-    df = df.filter(~col("article_text").startswith("#REDIRECT"))
-    df = df.filter(col("namespace") == 0)
-    
-    # 3. Shuffle clean data
-    clean_df = df.repartition(24)
-    
-    # 4. Apply Native Regex Chain (Extremely fast, compiles into one SQL step)
-    print("\n[2/4] Applying JVM-Native Regex cleaning...")
-    
-    # This dynamically chains the regexp_replace functions together without leaving the JVM
-    cleaned_column = reduce(
-        lambda column, rule: regexp_replace(column, rule[0], rule[1]),
-        FAST_REGEX_RULES,
-        col("article_text")
+
+
+spark = (
+    SparkSession.builder.appName("Wikipedia Indexer")
+    .config("spark.es.nodes", "elasticsearch")
+    .config("spark.es.port", "9200")
+    .config("spark.es.nodes.wan.only", "true")
+    .config("spark.es.index.auto.create", "false")
+    .config("spark.es.batch.write.refresh", "false")
+    .config("spark.es.batch.size.entries", "5000")
+    .config("spark.es.batch.size.bytes", "5mb")
+    .config("spark.sql.shuffle.partitions", str(PARTITIONS))
+    .config("spark.network.timeout", "600s")
+    .config("spark.executor.heartbeatInterval", "60s")
+    .getOrCreate()
+)
+
+spark.sparkContext.setLogLevel("WARN")
+
+print("=" * 70)
+print("Wikipedia -> Elasticsearch")
+print("=" * 70)
+print(f"Dataset: {DUMP_PATH}")
+print(f"Index: {INDEX_NAME}")
+print(f"Partitions: {PARTITIONS}")
+
+print("\n[1/3] Reading XML and filtering real articles...")
+df = (
+    spark.read.format("xml")
+    .option("rowTag", "page")
+    .schema(WIKI_SCHEMA)
+    .load(DUMP_PATH)
+    .select(
+        col("id").cast(StringType()).alias("article_id"),
+        col("title").alias("article_title"),
+        col("revision.text._VALUE").alias("article_text"),
+        col("ns").cast("int").alias("namespace"),
     )
-    
-    clean_df = clean_df.withColumn("article_text", cleaned_column)
-    clean_df = clean_df.filter(col("article_text") != "")
-    
-    # 5. Index
-    print("\n[3/4] Indexing to Elasticsearch...")
-    clean_df.write.format("org.elasticsearch.spark.sql").option("es.mapping_id", "artice_id").mode("overwrite").save("wikipedia_index")
-    
-    print("\n[4/4] SUCCESS!")
-    spark.stop()
+)
+
+df = df.filter(col("article_id").isNotNull())
+df = df.filter(col("article_text").isNotNull())
+df = df.filter(col("namespace") == 0)
+df = df.filter(~col("article_text").rlike(r"(?i)^#redirect"))
+
+print("\n[2/3] Cleaning wiki markup...")
+clean_df = (
+    df.repartition(PARTITIONS)
+    .withColumn("article_text", clean_text(col("article_text")))
+    .withColumn("article_text", trim(col("article_text")))
+    .filter(length(col("article_text")) >= 20)
+    .withColumn("text_length", length(col("article_text")))
+)
+
+print("\n[3/3] Writing to Elasticsearch...")
+(
+    clean_df.write.format("org.elasticsearch.spark.sql")
+    .option("es.mapping.id", "article_id")
+    .mode("append")
+    .save(INDEX_NAME)
+)
+
+spark.stop()
+print("\nDone.")

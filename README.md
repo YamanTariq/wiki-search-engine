@@ -66,3 +66,10 @@ no#  workers  cores_per_worker   Ram_per_worker  time
 3     3           4                3             4:00
 
 
+$env:WIKI_MAX_DOCS = "100000"
+.\run_pipeline.ps1 -Profile gcp
+
+Remove-Item Env:\WIKI_MAX_DOCS
+
+Remove-Item Env:\WIKI_MAX_DOCS -ErrorAction SilentlyContinue
+.\run_pipeline.ps1 -Profile local

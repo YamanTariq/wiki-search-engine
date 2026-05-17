@@ -1,18 +1,16 @@
 services:
-  # 1. Elasticsearch (The Storage & Search Engine)
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false  
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"  
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ports:
       - "9200:9200"
     networks:
       - search-network
 
-  # 2. Kibana (The User Interface)
   kibana:
     image: docker.elastic.co/kibana/kibana:8.19.0
     container_name: kibana
@@ -25,34 +23,33 @@ services:
     networks:
       - search-network
 
-  # 3. Apache Spark Master (The Brain)
   spark-master:
     build: .
     container_name: spark-master
-    # The official image uses commands to start the master instead of environment variables
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "8080:8080"
       - "7077:7077"
     volumes:
-      - ./data:/opt/spark/work-dir/data  
+      - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts
+      - spark-ivy-cache:/tmp/.ivy
+    depends_on:
+      - elasticsearch
     networks:
       - search-network
 
-  # 4. Apache Spark Worker (The Muscle)
   spark-worker:
     build: .
-    # Command to start the worker and connect it to the master node
+    container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
-    deploy:
-      replicas: 1 # 3-node distributed cluster
     environment:
-      - SPARK_WORKER_CORES=10  # Forces each worker to only use 3 cores (9 total)
-      - SPARK_WORKER_MEMORY=10g  # Forces each worker to only use 2GB RAM (6GB total)
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=6g
     volumes:
       - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts
+      - spark-ivy-cache:/tmp/.ivy
     depends_on:
       - spark-master
     networks:
@@ -61,3 +58,6 @@ services:
 networks:
   search-network:
     driver: bridge
+
+volumes:
+  spark-ivy-cache:

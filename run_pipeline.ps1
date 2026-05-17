@@ -1,35 +1,138 @@
-Write-Host "--- 🚀 Ensuring Distributed Cluster is Running ---" -ForegroundColor Green
-# We removed the 'down' command. 'up -d' will just start it if it's off, or do nothing if it's already running.
-docker compose up -d
+param(
+    [string]$DumpFile = "simplewiki_small.bz2",
+    [string]$IndexName = "wikipedia_index",
+    [int]$Partitions = 24,
+    [string]$ExecutorMemory = "4g"
+)
 
-Write-Host "--- ⏳ Waiting 30 seconds for connections... ---" -ForegroundColor Cyan
-Start-Sleep -Seconds 30 
+$ErrorActionPreference = "Stop"
 
-Write-Host "--- 🧹 Wiping ONLY the old Wikipedia Index data ---" -ForegroundColor Yellow
-# This API call deletes the specific database table, NOT your Kibana settings.
-try {
-    Invoke-RestMethod -Uri "http://localhost:9200/wikipedia_index" -Method Delete -ErrorAction SilentlyContinue
-    Write-Host "Old index deleted successfully." -ForegroundColor Green
-} catch {
-    Write-Host "No existing index found to delete (or Elasticsearch is still booting)." -ForegroundColor Gray
+$EsUrl = "http://localhost:9200"
+$dataPath = Join-Path $PSScriptRoot "data\$DumpFile"
+if (-not (Test-Path -LiteralPath $dataPath)) {
+    throw "Dataset not found: $dataPath"
 }
 
-Write-Host "--- ⚙️ Optimizing Elasticsearch for Bulk Ingestion ---" -ForegroundColor Cyan
-$es_settings = @{
-    settings = @{
-        "index.refresh_interval" = "-1"
-        "index.number_of_replicas" = 0
+Write-Host "--- Starting Elasticsearch, Kibana, and Spark ---" -ForegroundColor Green
+docker compose up -d --build
+
+Write-Host "--- Waiting for Elasticsearch ---" -ForegroundColor Cyan
+$ready = $false
+for ($i = 1; $i -le 30; $i++) {
+    try {
+        $health = Invoke-RestMethod -Uri "$EsUrl/_cluster/health" -ErrorAction Stop
+        if ($health.status -eq "green" -or $health.status -eq "yellow") {
+            $ready = $true
+            Write-Host "Elasticsearch is ready: $($health.status)" -ForegroundColor Green
+            break
+        }
+    } catch {
+        Start-Sleep -Seconds 5
     }
-} | ConvertTo-Json
+}
 
-Invoke-RestMethod -Uri "http://localhost:9200/wikipedia_index" -Method Put -Body $es_settings -ContentType "application/json" -ErrorAction SilentlyContinue
+if (-not $ready) {
+    throw "Elasticsearch did not become ready. Check: docker logs elasticsearch"
+}
 
-Write-Host "--- 🧠 Submitting PySpark Job to the Master Node ---" -ForegroundColor Green
-docker exec -it spark-master /opt/spark/bin/spark-submit `
-  --master spark://spark-master:7077 `
-  --conf "spark.executor.memory=8g" `
-  --conf "spark.jars.ivy=/tmp/.ivy" `
-  --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.12.0,com.databricks:spark-xml_2.12:0.17.0 `
-  /opt/spark/work-dir/scripts/process_wiki.py
+Write-Host "--- Creating Elasticsearch index ---" -ForegroundColor Cyan
+try {
+    Invoke-RestMethod -Uri "$EsUrl/$IndexName" -Method Delete -ErrorAction Stop | Out-Null
+    Write-Host "Deleted old index." -ForegroundColor Yellow
+} catch {
+    Write-Host "No old index found." -ForegroundColor Gray
+}
 
-Write-Host "--- 🎉 Ingestion Complete! Check Kibana to verify. ---" -ForegroundColor Magenta
+$indexConfig = @'
+{
+  "settings": {
+    "index": {
+      "refresh_interval": "-1",
+      "number_of_replicas": 0,
+      "number_of_shards": 3,
+      "query": {
+        "default_field": ["article_title^3", "article_text"]
+      }
+    },
+    "analysis": {
+      "analyzer": {
+        "wiki_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "english_stop", "english_stemmer"]
+        }
+      },
+      "filter": {
+        "english_stop": {
+          "type": "stop",
+          "stopwords": "_english_"
+        },
+        "english_stemmer": {
+          "type": "stemmer",
+          "language": "english"
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "article_id": {
+        "type": "keyword"
+      },
+      "article_title": {
+        "type": "text",
+        "analyzer": "wiki_analyzer",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "article_text": {
+        "type": "text",
+        "analyzer": "wiki_analyzer"
+      },
+      "namespace": {
+        "type": "integer"
+      },
+      "text_length": {
+        "type": "integer"
+      }
+    }
+  }
+}
+'@
+
+Invoke-RestMethod `
+    -Uri "$EsUrl/$IndexName" `
+    -Method Put `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes($indexConfig)) `
+    -ContentType "application/json; charset=utf-8" | Out-Null
+
+Write-Host "--- Running Spark ingestion ---" -ForegroundColor Green
+$containerDumpPath = "/opt/spark/work-dir/data/$DumpFile"
+docker exec -i `
+    --env "WIKI_DUMP_PATH=$containerDumpPath" `
+    --env "ES_INDEX=$IndexName" `
+    --env "WIKI_PARTITIONS=$Partitions" `
+    spark-master `
+    /opt/spark/bin/spark-submit `
+    --master spark://spark-master:7077 `
+    --conf "spark.executor.memory=$ExecutorMemory" `
+    --conf "spark.executor.cores=4" `
+    --conf "spark.jars.ivy=/tmp/.ivy" `
+    --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.19.0,com.databricks:spark-xml_2.12:0.17.0 `
+    /opt/spark/work-dir/scripts/process_wiki.py
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Spark job failed."
+}
+
+Write-Host "--- Enabling search and counting indexed articles ---" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$EsUrl/$IndexName/_settings" -Method Put -Body '{"index":{"refresh_interval":"1s"}}' -ContentType "application/json" | Out-Null
+Invoke-RestMethod -Uri "$EsUrl/$IndexName/_refresh" -Method Post | Out-Null
+$count = Invoke-RestMethod -Uri "$EsUrl/$IndexName/_count"
+
+Write-Host "Indexed articles: $($count.count)" -ForegroundColor Green
+Write-Host "Done. Spark UI: http://localhost:8080  Kibana: http://localhost:5601" -ForegroundColor Magenta
