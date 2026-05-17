@@ -1,9 +1,11 @@
 import streamlit as st
 from elasticsearch import Elasticsearch
+import os
 
 # Connect to your local Docker Elasticsearch
-es = Elasticsearch("http://localhost:9200")
-INDEX_NAME = "wikipedia_index"
+ES_URL = os.getenv("ES_URL", "http://localhost:9200")
+INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
+es = Elasticsearch(ES_URL)
 
 
 def build_search_query(user_query):

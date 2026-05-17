@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-submit-wiki-ingestion
+  namespace: wiki-search
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: REPLACE_WITH_ACR.azurecr.io/wiki-search-engine:latest
+          command:
+            - /opt/spark/bin/spark-submit
+          args:
+            - --master
+            - spark://spark-master:7077
+            - --conf
+            - spark.executor.memory=6g
+            - --conf
+            - spark.executor.cores=2
+            - --conf
+            - spark.cores.max=6
+            - --conf
+            - spark.jars.ivy=/tmp/.ivy
+            - --packages
+            - org.elasticsearch:elasticsearch-spark-30_2.12:8.19.0,com.databricks:spark-xml_2.12:0.17.0
+            - /opt/spark/work-dir/scripts/process_wiki.py
+          env:
+            - name: WIKI_DUMP_PATH
+              value: /data/simplewiki_meh.bz2
+            - name: ES_INDEX
+              value: wikipedia_index
+            - name: ES_NODES
+              value: elasticsearch
+            - name: ES_PORT
+              value: "9200"
+            - name: ES_WAN_ONLY
+              value: "true"
+            - name: WIKI_PARTITIONS
+              value: "96"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: wiki-data
+              mountPath: /data
+      volumes:
+        - name: wiki-data
+          persistentVolumeClaim:
+            claimName: wiki-data-pvc

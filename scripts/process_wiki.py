@@ -9,6 +9,9 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_small.bz2")
 INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
 PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "24"))
+ES_NODES = os.getenv("ES_NODES", "elasticsearch")
+ES_PORT = os.getenv("ES_PORT", "9200")
+ES_WAN_ONLY = os.getenv("ES_WAN_ONLY", "true")
 
 WIKI_SCHEMA = StructType(
     [
@@ -83,9 +86,9 @@ def clean_text(column):
 
 spark = (
     SparkSession.builder.appName("Wikipedia Indexer")
-    .config("spark.es.nodes", "elasticsearch")
-    .config("spark.es.port", "9200")
-    .config("spark.es.nodes.wan.only", "true")
+    .config("spark.es.nodes", ES_NODES)
+    .config("spark.es.port", ES_PORT)
+    .config("spark.es.nodes.wan.only", ES_WAN_ONLY)
     .config("spark.es.index.auto.create", "false")
     .config("spark.es.batch.write.refresh", "false")
     .config("spark.es.batch.size.entries", "5000")
@@ -103,6 +106,7 @@ print("Wikipedia -> Elasticsearch")
 print("=" * 70)
 print(f"Dataset: {DUMP_PATH}")
 print(f"Index: {INDEX_NAME}")
+print(f"Elasticsearch: {ES_NODES}:{ES_PORT}")
 print(f"Partitions: {PARTITIONS}")
 
 print("\n[1/3] Reading XML and filtering real articles...")

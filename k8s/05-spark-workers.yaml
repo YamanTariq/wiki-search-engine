@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+  namespace: wiki-search
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      containers:
+        - name: spark-worker
+          image: REPLACE_WITH_ACR.azurecr.io/wiki-search-engine:latest
+          command:
+            - /opt/spark/bin/spark-class
+            - org.apache.spark.deploy.worker.Worker
+            - spark://spark-master:7077
+          env:
+            - name: SPARK_WORKER_CORES
+              value: "2"
+            - name: SPARK_WORKER_MEMORY
+              value: 8g
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "3"
+              memory: 10Gi
+          volumeMounts:
+            - name: wiki-data
+              mountPath: /data
+      volumes:
+        - name: wiki-data
+          persistentVolumeClaim:
+            claimName: wiki-data-pvc
