@@ -44,8 +44,8 @@ services:
     container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     environment:
-      - SPARK_WORKER_CORES=4
-      - SPARK_WORKER_MEMORY=6g
+      - SPARK_WORKER_CORES=12
+      - SPARK_WORKER_MEMORY=10g
     volumes:
       - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts
