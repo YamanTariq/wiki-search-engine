@@ -79,7 +79,7 @@ if __name__ == "__main__":
     df = df.filter(col("namespace") == 0)
     
     # 3. Shuffle clean data
-    clean_df = df.repartition(100)
+    clean_df = df.repartition(24)
     
     # 4. Apply Native Regex Chain (Extremely fast, compiles into one SQL step)
     print("\n[2/4] Applying JVM-Native Regex cleaning...")
