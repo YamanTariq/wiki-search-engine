@@ -1,17 +1,17 @@
-Write-Host "--- 🛑 Tearing down old cluster ---" -ForegroundColor Yellow
-docker compose down -v
-
-Write-Host "--- 🚀 Spinning up Distributed Cluster (1 Master, 3 Workers, ES, Kibana) ---" -ForegroundColor Green
+Write-Host "--- 🚀 Ensuring Distributed Cluster is Running ---" -ForegroundColor Green
+# We removed the 'down' command. 'up -d' will just start it if it's off, or do nothing if it's already running.
 docker compose up -d
 
-Write-Host "--- ⏳ Waiting 30 seconds for Elasticsearch and Spark to fully boot... ---" -ForegroundColor Cyan
-Start-Sleep -Seconds 30
+Write-Host "--- ⏳ Waiting 30 seconds for connections... ---" -ForegroundColor Cyan
+Start-Sleep -Seconds 30 
 
-Write-Host "--- 🧹 Wiping old Elasticsearch Index ---" -ForegroundColor Yellow
+Write-Host "--- 🧹 Wiping ONLY the old Wikipedia Index data ---" -ForegroundColor Yellow
+# This API call deletes the specific database table, NOT your Kibana settings.
 try {
     Invoke-RestMethod -Uri "http://localhost:9200/wikipedia_index" -Method Delete -ErrorAction SilentlyContinue
+    Write-Host "Old index deleted successfully." -ForegroundColor Green
 } catch {
-
+    Write-Host "No existing index found to delete (or Elasticsearch is still booting)." -ForegroundColor Gray
 }
 
 Write-Host "--- ⚙️ Optimizing Elasticsearch for Bulk Ingestion ---" -ForegroundColor Cyan
@@ -27,8 +27,9 @@ Invoke-RestMethod -Uri "http://localhost:9200/wikipedia_index" -Method Put -Body
 Write-Host "--- 🧠 Submitting PySpark Job to the Master Node ---" -ForegroundColor Green
 docker exec -it spark-master /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
+  --conf "spark.executor.memory=8g" `
   --conf "spark.jars.ivy=/tmp/.ivy" `
   --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.12.0,com.databricks:spark-xml_2.12:0.17.0 `
   /opt/spark/work-dir/scripts/process_wiki.py
 
-Write-Host "--- 🎉 Pipeline Complete! Check http://localhost:8501 for your Streamlit UI ---" -ForegroundColor Magenta
+Write-Host "--- 🎉 Ingestion Complete! Check Kibana to verify. ---" -ForegroundColor Magenta

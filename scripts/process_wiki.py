@@ -1,29 +1,20 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, regexp_replace
+from pyspark.sql.types import StructType, StructField, StringType, LongType
 from functools import reduce
 import re
 
-# ============================================================================
-# NATIVE SPARK SQL REGEX PATTERNS (Runs 100% inside the JVM - Zero Python Overhead)
-# ============================================================================
-REGEX_RULES = [
-    (r"(?s)", ""),                                # HTML comments
-    (r"(?s)<ref[^>]*>.*?</ref>", ""),                       # Citations
-    (r"<ref[^>]*/>", ""),                                   # Self-closing refs
-    (r"(?s)\{\{[^{}]*\}\}", ""),                            # Inner templates (Pass 1)
-    (r"(?s)\{\{.*?\}\}", ""),                               # Outer templates (Pass 2)
-    (r"(?i)\[\[(?:File|Image|Category):.*?\]\]", ""),       # Files and Categories
-    (r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"),                  # Piped links
-    (r"\[\[([^\]|]*?)\]\]", "$1"),                          # Standard links
-    (r"\[http[^\s]+\s+([^\]]+)\]", "$1"),                   # External links with text
-    (r"\[http[^\]]+\]", ""),                                # Bare external links
-    (r"<[^>]+>", ""),                                       # Remaining HTML tags
-    (r"'{2,5}", ""),                                        # Bold/Italic
-    (r"={2,6}\s*(.*?)\s*={2,6}", "$1"),                     # Headers
-    (r"\|\s*[a-zA-Z_][\w\s]*\s*=\s*", ""),                  # Orphaned template parameters
-    (r"\|", ""),                                            # Stray pipes
-    (r"\n{3,}", "\n\n")                                     # Cleanup excessive newlines
-]
+# NEW: Explicit schema to prevent memory blowouts during XML parsing
+wiki_schema = StructType([
+    StructField("title", StringType(), True),
+    StructField("id", LongType(), True),         # Added the critical ID field
+    StructField("ns", LongType(), True),
+    StructField("revision", StructType([
+        StructField("text", StructType([
+            StructField("_VALUE", StringType(), True)
+        ]), True)
+    ]), True)
+])
 
 # ============================================================================
 # HIGH-SPEED NATIVE SPARK SQL REGEX (Optimized for JVM Performance)
@@ -71,10 +62,14 @@ if __name__ == "__main__":
     
     # 1. Load Data
     print("\n[1/4] Loading and filtering Wikipedia XML...")
-    df = spark.read.format("xml").option("rowTag", "page").load("/opt/spark/work-dir/data/simplewiki_meh.bz2")
-    
+    df = spark.read.format("xml") \
+        .option("rowTag", "page") \
+        .schema(wiki_schema) \
+        .load("/opt/spark/work-dir/data/simplewiki_small.bz2") # Make sure the filename is correct
+
     # 2. Filter BEFORE repartitioning
     df = df.select(
+        col("id").alias("article_id"),
         col("title").alias("article_title"), 
         col("revision.text._VALUE").alias("article_text"), 
         col("ns").alias("namespace")
@@ -84,7 +79,7 @@ if __name__ == "__main__":
     df = df.filter(col("namespace") == 0)
     
     # 3. Shuffle clean data
-    clean_df = df.repartition(24)
+    clean_df = df.repartition(100)
     
     # 4. Apply Native Regex Chain (Extremely fast, compiles into one SQL step)
     print("\n[2/4] Applying JVM-Native Regex cleaning...")
