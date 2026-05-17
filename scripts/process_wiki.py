@@ -96,7 +96,7 @@ if __name__ == "__main__":
     
     # 5. Index
     print("\n[3/4] Indexing to Elasticsearch...")
-    clean_df.write.format("org.elasticsearch.spark.sql").mode("overwrite").save("wikipedia_index")
+    clean_df.write.format("org.elasticsearch.spark.sql").option("es.mapping_id", "artice_id").mode("overwrite").save("wikipedia_index")
     
     print("\n[4/4] SUCCESS!")
     spark.stop()
