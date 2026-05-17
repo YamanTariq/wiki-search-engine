@@ -1,107 +1,107 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace, lower
+from pyspark.sql.functions import col, regexp_replace
+from functools import reduce
+import re
 
-# 1. Initialize the Spark Session
-# This tells Spark how to connect to our Elasticsearch container
-spark = SparkSession.builder \
-    .appName("Wikipedia Distributed Indexer") \
-    .config("spark.es.nodes", "elasticsearch") \
-    .config("spark.es.port", "9200") \
-    .config("spark.es.nodes.wan.only", "true") \
-    .config("spark.es.index.auto.create", "true") \
-    .config("spark.es.batch.size.entries", "5000") \
-    .config("spark.es.batch.write.refresh", "false") \
-    .getOrCreate()
+# ============================================================================
+# NATIVE SPARK SQL REGEX PATTERNS (Runs 100% inside the JVM - Zero Python Overhead)
+# ============================================================================
+REGEX_RULES = [
+    (r"(?s)", ""),                                # HTML comments
+    (r"(?s)<ref[^>]*>.*?</ref>", ""),                       # Citations
+    (r"<ref[^>]*/>", ""),                                   # Self-closing refs
+    (r"(?s)\{\{[^{}]*\}\}", ""),                            # Inner templates (Pass 1)
+    (r"(?s)\{\{.*?\}\}", ""),                               # Outer templates (Pass 2)
+    (r"(?i)\[\[(?:File|Image|Category):.*?\]\]", ""),       # Files and Categories
+    (r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"),                  # Piped links
+    (r"\[\[([^\]|]*?)\]\]", "$1"),                          # Standard links
+    (r"\[http[^\s]+\s+([^\]]+)\]", "$1"),                   # External links with text
+    (r"\[http[^\]]+\]", ""),                                # Bare external links
+    (r"<[^>]+>", ""),                                       # Remaining HTML tags
+    (r"'{2,5}", ""),                                        # Bold/Italic
+    (r"={2,6}\s*(.*?)\s*={2,6}", "$1"),                     # Headers
+    (r"\|\s*[a-zA-Z_][\w\s]*\s*=\s*", ""),                  # Orphaned template parameters
+    (r"\|", ""),                                            # Stray pipes
+    (r"\n{3,}", "\n\n")                                     # Cleanup excessive newlines
+]
 
-# Suppress overly chatty logs
-spark.sparkContext.setLogLevel("WARN")
+# ============================================================================
+# HIGH-SPEED NATIVE SPARK SQL REGEX (Optimized for JVM Performance)
+# ============================================================================
+# We use the '|' (OR) operator to group multiple replacements into single passes,
+# reducing the number of times Spark has to scan and allocate new memory for the string.
 
-print("--- Starting Distributed Wikipedia Processing ---")
+FAST_REGEX_RULES = [
+    # PASS 1: Nuke massive blocks (Citations, HTML comments, Bare URLs, Files, Categories)
+    # Replaced (?s) with [\s\S] for faster cross-line matching without flag overhead
+    (r"|<ref[^>]*>[\s\S]*?</ref>|<ref[^>]*/>|\[\[(?:File|Image|Category):[^\]]*\]\]|\[http[^\]]+\]", ""),
+    
+    # PASS 2 & 3: Templates (Run twice to catch basic nesting without catastrophic backtracking)
+    (r"\{\{[^{}]*\}\}", ""), 
+    (r"\{\{[^{}]*\}\}", ""), 
+    
+    # PASS 4: Extract readable text from links
+    (r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"),  # [[Target|Text]] -> Text
+    (r"\[\[([^\]|]*?)\]\]", "$1"),          # [[Target]] -> Target
+    (r"\[http[^\s]+\s+([^\]]+)\]", "$1"),   # [http://site.com Text] -> Text
+    
+    # PASS 5: Global Formatting Sweep (HTML tags, bold/italic, headers, template parameters, pipes)
+    (r"<[^>]+>|'{2,5}|={2,6}\s*|\s*={2,6}|\|\s*[a-zA-Z_][\w\s]*\s*=\s*|\|", ""),
+    
+    # PASS 6: Clean up the leftover whitespace
+    (r"\n{3,}", "\n\n")
+]
 
-# 2. Read the Compressed XML File
-# Spark automatically decompresses the .bz2 file in parallel across workers!
-# We use the databricks-xml library to easily parse the XML 'page' tags.
-df = spark.read \
-    .format("xml") \
-    .option("rowTag", "page") \
-    .load("/opt/spark/work-dir/data/simplewiki_small.bz2")
-
-# --- NEW LINE: Force Spark to slice the data into 24 distributed chunks ---
-df = df.repartition(24)
-print("Raw data loaded. Cleaning and transforming...")
-
-# ---------------------------------------------------------
-# 3. Clean and Transform the Data (Upgraded)
-# ---------------------------------------------------------
-clean_df = df.select(
-    col("title").alias("article_title"),
-    col("revision.text._VALUE").alias("article_text")
-)
-
-# Filter out empty articles or redirect pages
-clean_df = clean_df.filter(col("article_text").isNotNull())
-clean_df = clean_df.filter(~col("article_text").startswith("#REDIRECT"))
-
-# ---------------------------------------------------------
-# NEW: Filter out Wikipedia Administrative Namespaces
-# ---------------------------------------------------------
-# We use a Regular Expression to match titles that start with these specific prefixes.
-# The '^' symbol means "starts with". The '|' symbol means "OR".
-namespace_pattern = "^(Wikipedia:|Talk:|User:|User talk:|Category:|Template:|File:|Draft:|Portal:|Help:)"
-
-# The ~ symbol means "NOT". So we keep rows that DO NOT start with those namespaces.
-clean_df = clean_df.filter(~col("article_title").rlike(namespace_pattern))
-
-
-# --- The Regex Purification Pipeline ---
-# Note: "(?s)" tells Spark's regex engine to match across multiple lines
-
-# 1. Remove Citations and HTML tags
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)<ref.*?>.*?</ref>", ""))
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"<[^>]*>", ""))
-
-# 2. Remove Infoboxes and Templates {{ ... }}
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)\{\{.*?\}\}", ""))
-
-# 3. Remove Image and File attachments [[File:...]]
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"(?s)\[\[(?:File|Image):.*?\]\]", ""))
-
-# 4. Clean internal links: convert [[Target|Text]] into just "Text"
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[\[[^\]]*?\|([^\]]*?)\]\]", "$1"))
-
-# 5. Clean remaining basic links: convert [[Text]] into just "Text"
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[\[|\]\]", ""))
-
-# 6. Remove Bold/Italic formatting ticks
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"'{2,5}", ""))
-
-# 7. Remove rogue formatting characters (like excessive equals signs for headers)
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"={2,5}", ""))
-
-# --- NEW REGEX RULES ---
-
-# 1. Clean External Links WITH display text: [http://www.site.com Official site] -> "Official site"
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[http[^\s]+\s+([^\]]+)\]", "$1"))
-
-# 2. Clean External Links WITHOUT display text: [http://www.site.com] -> ""
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\[http[^\]]+\]", ""))
-
-# 3. Clean orphaned template parameters (e.g., "| website = " or "| birth_date = ")
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\|\s*[\w\s]+\s*=\s*", ""))
-
-# 4. Clean lingering single pipes "|"
-clean_df = clean_df.withColumn("article_text", regexp_replace("article_text", r"\|", ""))
-
-print("Data purified. Blasting data to Elasticsearch...")
-# ---------------------------------------------------------
-
-# 4. Write to Elasticsearch in Parallel
-# Spark will open multiple network connections and push chunks of data simultaneously.
-clean_df.write \
-    .format("org.elasticsearch.spark.sql") \
-    .mode("overwrite") \
-    .save("wikipedia_index")
-
-print("--- SUCCESS! Data is now in Elasticsearch ---")
-
-spark.stop()
+if __name__ == "__main__":
+    # Initialize Spark with extended Network Timeouts to prevent Heartbeat crashes
+    spark = SparkSession.builder \
+        .appName("Wikipedia Indexer - Native JVM") \
+        .config("spark.es.nodes", "elasticsearch") \
+        .config("spark.es.port", "9200") \
+        .config("spark.es.nodes.wan.only", "true") \
+        .config("spark.es.index.auto.create", "true") \
+        .config("spark.es.batch.write.refresh", "false") \
+        .config("spark.es.batch.size.entries", "5000") \
+        .config("spark.es.batch.size.bytes", "5mb") \
+        .config("spark.network.timeout", "600s") \
+        .config("spark.executor.heartbeatInterval", "60s") \
+        .getOrCreate()
+    
+    spark.sparkContext.setLogLevel("WARN")
+    
+    # 1. Load Data
+    print("\n[1/4] Loading and filtering Wikipedia XML...")
+    df = spark.read.format("xml").option("rowTag", "page").load("/opt/spark/work-dir/data/simplewiki_meh.bz2")
+    
+    # 2. Filter BEFORE repartitioning
+    df = df.select(
+        col("title").alias("article_title"), 
+        col("revision.text._VALUE").alias("article_text"), 
+        col("ns").alias("namespace")
+    )
+    df = df.filter(col("article_text").isNotNull())
+    df = df.filter(~col("article_text").startswith("#REDIRECT"))
+    df = df.filter(col("namespace") == 0)
+    
+    # 3. Shuffle clean data
+    clean_df = df.repartition(24)
+    
+    # 4. Apply Native Regex Chain (Extremely fast, compiles into one SQL step)
+    print("\n[2/4] Applying JVM-Native Regex cleaning...")
+    
+    # This dynamically chains the regexp_replace functions together without leaving the JVM
+    cleaned_column = reduce(
+        lambda column, rule: regexp_replace(column, rule[0], rule[1]),
+        FAST_REGEX_RULES,
+        col("article_text")
+    )
+    
+    clean_df = clean_df.withColumn("article_text", cleaned_column)
+    clean_df = clean_df.filter(col("article_text") != "")
+    
+    # 5. Index
+    print("\n[3/4] Indexing to Elasticsearch...")
+    clean_df.write.format("org.elasticsearch.spark.sql").mode("overwrite").save("wikipedia_index")
+    
+    print("\n[4/4] SUCCESS!")
+    spark.stop()

@@ -6,7 +6,7 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false  
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"  
+      - "ES_JAVA_OPTS=-Xms1g -Xmx2g"  
     ports:
       - "9200:9200"
     networks:
@@ -27,7 +27,7 @@ services:
 
   # 3. Apache Spark Master (The Brain)
   spark-master:
-    image: apache/spark:3.5.1
+    build: .
     container_name: spark-master
     # The official image uses commands to start the master instead of environment variables
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
@@ -42,14 +42,14 @@ services:
 
   # 4. Apache Spark Worker (The Muscle)
   spark-worker:
-    image: apache/spark:3.5.1
+    build: .
     # Command to start the worker and connect it to the master node
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     deploy:
-      replicas: 3 # 3-node distributed cluster
+      replicas: 2 # 3-node distributed cluster
     environment:
-      - SPARK_WORKER_CORES=4    # Forces each worker to only use 3 cores (9 total)
-      - SPARK_WORKER_MEMORY=4g  # Forces each worker to only use 2GB RAM (6GB total)
+      - SPARK_WORKER_CORES=12   # Forces each worker to only use 3 cores (9 total)
+      - SPARK_WORKER_MEMORY=10g  # Forces each worker to only use 2GB RAM (6GB total)
     volumes:
       - ./data:/opt/spark/work-dir/data
       - ./scripts:/opt/spark/work-dir/scripts
