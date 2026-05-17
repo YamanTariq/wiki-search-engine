@@ -55,6 +55,12 @@ $indexConfig = @'
       }
     },
     "analysis": {
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase"]
+        }
+      },
       "analyzer": {
         "wiki_analyzer": {
           "type": "custom",
@@ -85,6 +91,7 @@ $indexConfig = @'
         "fields": {
           "keyword": {
             "type": "keyword",
+            "normalizer": "lowercase_normalizer",
             "ignore_above": 256
           }
         }
