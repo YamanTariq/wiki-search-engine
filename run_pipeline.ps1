@@ -1,9 +1,9 @@
 param(
-    [string]$DumpFile = "simplewiki_small.bz2",
+    [string]$DumpFile = "simplewiki_5gb.bz2",
     [string]$IndexName = "wikipedia_index",
-    [int]$Partitions = 24,
-    [string]$ExecutorMemory = "2g"
-    [int]$ExecutorCores = 3
+    [int]$Partitions = 300,   # 300 for 10 gb, 
+    [string]$ExecutorMemory = "2g", # 1 less than worker memory
+    [int]$ExecutorCores = 3 #
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,7 +128,7 @@ docker exec -i `
     /opt/spark/bin/spark-submit `
     --master spark://spark-master:7077 `
     --conf "spark.executor.memory=$ExecutorMemory" `
-    --conf "spark.executor.cores=4" `
+    --conf "spark.executor.cores=$ExecutorCores" `
     --conf "spark.jars.ivy=/tmp/.ivy" `
     --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.19.0,com.databricks:spark-xml_2.12:0.17.0 `
     /opt/spark/work-dir/scripts/process_wiki.py

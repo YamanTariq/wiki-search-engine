@@ -10,15 +10,14 @@ services:
       resources:
         limits:
           memory: 4G
+
     ports:
       - "9200:9200"
     networks:
-      search-network:
-        aliases:
-          - elasticsearch
+      - search-network
     volumes:
       - es-data:/usr/share/elasticsearch/data
-    healthcheck:
+    healthcheck: # <-- Add this block
       test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"[^r]'"]
       interval: 5s
       timeout: 5s
@@ -65,12 +64,12 @@ services:
       - ./scripts:/opt/spark/work-dir/scripts
       - spark-ivy-cache:/tmp/.ivy
     depends_on:
-      elasticsearch:
-        condition: service_healthy
-      spark-master:
+      - spark-master:
         condition: service_started
+      - elasticsearch:
+        condition: service_healthy
     networks:
-      search-network:
+      - search-network:
         aliases:
           - spark-worker-node
 

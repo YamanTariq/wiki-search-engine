@@ -6,7 +6,7 @@ from pyspark.sql.functions import col, length, regexp_replace, trim
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 
-DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_half.bz2")
+DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_5gb.bz2")
 INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
 PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "100"))
 
@@ -88,7 +88,7 @@ spark = (
     .config("spark.es.nodes.wan.only", "true")
     .config("spark.es.index.auto.create", "false")
     .config("spark.es.batch.write.refresh", "false")
-    .config("spark.es.batch.size.entries", "1000")
+    .config("spark.es.batch.size.entries", "500")
     .config("spark.es.batch.size.bytes", "2mb")
     .config("spark.sql.shuffle.partitions", str(PARTITIONS))
     .config("spark.network.timeout", "600s")

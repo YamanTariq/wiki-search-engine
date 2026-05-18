@@ -1,23 +1,5 @@
-**Work to be done**
 
-> Data cleaning. rn the XMl file is uncleanmakes the elasticsearch index larger, slower, less accurate
-> optimize  the elastic search mappings. an index with strict mapping.
-> custom page rank because current isn't good
-> Make a script that automates the entire process. Currently have to put in commands myself
-> add fault tolerance by making multiple nodes with replication
-> write a benchmarking script to actually prove the system scales as data and load increases
-
-**work related to spark that needs to be done**
-> use bulk sizing
-> disable ES refresh
-> align partitions for load balancing
-
-
-**Text Cleaning**
-> only keep articles with namespace 0
-> use `<id>` as unique `_id`
-> 
-
+.\run_pipeline.ps1 -DumpFile simplewiki_half.bz2 -ExecutorMemory 1g -ExecutorCores 3 -Partitions 200
 
 **commands to run project**
 ***Ignore everything below. just run the `run_pipeline.ps1`***
