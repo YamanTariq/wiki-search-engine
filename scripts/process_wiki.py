@@ -8,7 +8,7 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_half.bz2")
 INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
-PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "24"))
+PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "100"))
 
 WIKI_SCHEMA = StructType(
     [
@@ -88,8 +88,8 @@ spark = (
     .config("spark.es.nodes.wan.only", "true")
     .config("spark.es.index.auto.create", "false")
     .config("spark.es.batch.write.refresh", "false")
-    .config("spark.es.batch.size.entries", "5000")
-    .config("spark.es.batch.size.bytes", "5mb")
+    .config("spark.es.batch.size.entries", "1000")
+    .config("spark.es.batch.size.bytes", "2mb")
     .config("spark.sql.shuffle.partitions", str(PARTITIONS))
     .config("spark.network.timeout", "600s")
     .config("spark.executor.heartbeatInterval", "60s")

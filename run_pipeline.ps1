@@ -2,7 +2,8 @@ param(
     [string]$DumpFile = "simplewiki_small.bz2",
     [string]$IndexName = "wikipedia_index",
     [int]$Partitions = 24,
-    [string]$ExecutorMemory = "4g"
+    [string]$ExecutorMemory = "2g"
+    [int]$ExecutorCores = 3
 )
 
 $ErrorActionPreference = "Stop"
