@@ -130,7 +130,7 @@ docker exec -i `
     --conf "spark.executor.memory=$ExecutorMemory" `
     --conf "spark.executor.cores=$ExecutorCores" `
     --conf "spark.jars.ivy=/tmp/.ivy" `
-    --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.19.0,com.databricks:spark-xml_2.12:0.17.0 `
+    --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.12.0,com.databricks:spark-xml_2.12:0.17.0 `
     /opt/spark/work-dir/scripts/process_wiki.py
 
 if ($LASTEXITCODE -ne 0) {

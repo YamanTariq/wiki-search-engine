@@ -6,7 +6,7 @@ from pyspark.sql.functions import col, length, regexp_replace, trim
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 
-DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_5gb.bz2")
+DUMP_PATH = os.getenv("WIKI_DUMP_PATH", "/opt/spark/work-dir/data/simplewiki_small.bz2")
 INDEX_NAME = os.getenv("ES_INDEX", "wikipedia_index")
 PARTITIONS = int(os.getenv("WIKI_PARTITIONS", "100"))
 

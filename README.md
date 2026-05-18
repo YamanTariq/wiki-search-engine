@@ -1,6 +1,9 @@
 
 .\run_pipeline.ps1 -DumpFile simplewiki_half.bz2 -ExecutorMemory 1g -ExecutorCores 3 -Partitions 200
 
+command to run:
+.\run_pipeline.ps1 -DumpFile "simplewiki_5gb.bz2" -ExecutorMemory "4g" -ExecutorCores 5 -Partitions 400
+
 **commands to run project**
 ***Ignore everything below. just run the `run_pipeline.ps1`***
 First make sure that docker is running. Then run the docker-compose.yaml using:
