@@ -1,7 +1,7 @@
 param(
-    [string]$DumpFile = "simplewiki_5gb.bz2",
+    [string]$DumpFile = "simplewiki_small.bz2",
     [string]$IndexName = "wikipedia_index",
-    [int]$Partitions = 300,   # 300 for 10 gb, 
+    [int]$Partitions = 24,   # 300 for 10 gb, 
     [string]$ExecutorMemory = "2g", # 1 less than worker memory
     [int]$ExecutorCores = 3 #
 )
@@ -48,8 +48,7 @@ $indexConfig = @'
 {
   "settings": {
     "index": {
-      "refresh_interval": "-1",
-      "number_of_replicas": 0,
+      "refresh_interval": "1s",
       "number_of_shards": 3,
       "query": {
         "default_field": ["article_title^3", "article_text"]
